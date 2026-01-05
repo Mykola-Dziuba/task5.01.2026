@@ -15,12 +15,13 @@ provider "aws" {
 
 locals {
   name = "${var.prefix}-ip-app"
-  az   = "${var.aws_region}a"
+  az_a = "${var.aws_region}a"
+  az_b = "${var.aws_region}b"
 }
 
 data "aws_caller_identity" "current" {}
 
-# ---------------- VPC (1 AZ, public only for simplicity/cost) ----------------
+# ---------------- VPC (2 AZ, public only) ----------------
 resource "aws_vpc" "this" {
   cidr_block           = "10.50.0.0/16"
   enable_dns_hostnames = true
@@ -36,9 +37,17 @@ resource "aws_internet_gateway" "igw" {
 resource "aws_subnet" "public_a" {
   vpc_id                  = aws_vpc.this.id
   cidr_block              = "10.50.0.0/24"
-  availability_zone       = local.az
+  availability_zone       = local.az_a
   map_public_ip_on_launch = true
   tags                    = { Name = "${local.name}-public-a" }
+}
+
+resource "aws_subnet" "public_b" {
+  vpc_id                  = aws_vpc.this.id
+  cidr_block              = "10.50.1.0/24"
+  availability_zone       = local.az_b
+  map_public_ip_on_launch = true
+  tags                    = { Name = "${local.name}-public-b" }
 }
 
 resource "aws_route_table" "public" {
@@ -54,6 +63,11 @@ resource "aws_route" "public_default" {
 
 resource "aws_route_table_association" "public_a" {
   subnet_id      = aws_subnet.public_a.id
+  route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table_association" "public_b" {
+  subnet_id      = aws_subnet.public_b.id
   route_table_id = aws_route_table.public.id
 }
 
@@ -107,7 +121,7 @@ resource "aws_lb" "this" {
   name               = substr("${local.name}-alb", 0, 32)
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
-  subnets            = [aws_subnet.public_a.id]
+  subnets            = [aws_subnet.public_a.id, aws_subnet.public_b.id]
   tags               = { Name = "${local.name}-alb" }
 }
 
@@ -209,7 +223,7 @@ resource "aws_ecs_service" "app" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = [aws_subnet.public_a.id]
+    subnets          = [aws_subnet.public_a.id, aws_subnet.public_b.id]
     security_groups  = [aws_security_group.ecs.id]
     assign_public_ip = true
   }
