@@ -1,0 +1,59 @@
+name: Build and Push to ECR (versioned)
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for tags
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }} # optional, ok if empty
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Compute next version tag
+        id: ver
+        shell: bash
+        run: |
+          git fetch --tags
+          LAST="$(git tag -l | sort -V | tail -n 1)"
+          if [ -z "$LAST" ]; then
+            NEXT="1.0"
+          else
+            MAJOR="${LAST%%.*}"
+            MINOR="${LAST##*.}"
+            if [ "$MINOR" -eq 9 ]; then
+              NEXT="$((MAJOR+1)).0"
+            else
+              NEXT="$MAJOR.$((MINOR+1))"
+            fi
+          fi
+          echo "version=$NEXT" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push to ECR
+        env:
+          REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-central-1.amazonaws.com
+          REPO: ip-test-app
+          TAG: ${{ steps.ver.outputs.version }}
+        run: |
+          docker build -t $REGISTRY/$REPO:$TAG .
+          docker push $REGISTRY/$REPO:$TAG
+          echo "Pushed: $REGISTRY/$REPO:$TAG"
